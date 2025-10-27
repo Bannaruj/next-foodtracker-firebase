@@ -4,6 +4,8 @@ import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { firebasedb } from "@/app/utils/firebaseConfig";
 import { supabase } from "@/app/utils/supabaseClient";
 
 interface FoodItem {
@@ -31,18 +33,18 @@ export default function EditFoodPage({ params }: PageProps) {
     const load = async () => {
       setIsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from("food_tb")
-          .select("id, foodname, meal, fooddate_at, food_image_url")
-          .eq("id", id)
-          .single();
-        if (error || !data) {
+        const foodDocRef = doc(firebasedb, "food", id);
+        const foodDoc = await getDoc(foodDocRef);
+
+        if (!foodDoc.exists()) {
           alert("Food item not found!");
           router.push("/dashboard");
           return;
         }
+
+        const data = foodDoc.data();
         const mapped: FoodItem = {
-          id: data.id,
+          id: foodDoc.id,
           date: data.fooddate_at ?? "",
           name: data.foodname ?? "",
           meal: data.meal ?? "",
@@ -154,17 +156,14 @@ export default function EditFoodPage({ params }: PageProps) {
         newImageUrl = publicUrl;
       }
 
-      const { error } = await supabase
-        .from("food_tb")
-        .update({
-          foodname: foodItem.name,
-          meal: foodItem.meal,
-          fooddate_at: foodItem.date,
-          food_image_url: newImageUrl,
-        })
-        .eq("id", foodItem.id);
-
-      if (error) throw error;
+      const foodDocRef = doc(firebasedb, "food", foodItem.id);
+      await updateDoc(foodDocRef, {
+        foodname: foodItem.name,
+        meal: foodItem.meal,
+        fooddate_at: foodItem.date,
+        food_image_url: newImageUrl,
+        update_at: new Date().toISOString(),
+      });
 
       alert("Food item updated successfully!");
       router.push("/dashboard");
@@ -201,8 +200,10 @@ export default function EditFoodPage({ params }: PageProps) {
                 <Image
                   src={imagePreview}
                   alt="Food Preview"
-                  fill
+                  width={400}
+                  height={192}
                   className="object-cover"
+                  unoptimized
                 />
               ) : (
                 <span className="text-gray-500">No Image Preview</span>

@@ -18,12 +18,10 @@ export default function HomePage() {
           Welcome to <span className="text-green-600">Food Tracker</span>
         </h1>
 
-        {/* Subheading */}
         <p className="text-xl text-gray-600 mt-4 mb-8">
           Track your meals, count your calories, and achieve your health goals!
         </p>
 
-        {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4">
           <Link href="/auth/register" passHref>
             <button className="w-48 px-8 py-3 bg-green-500 text-white font-bold rounded-full hover:bg-green-600 transition-transform transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-400 focus:ring-opacity-75">

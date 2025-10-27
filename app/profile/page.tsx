@@ -1,10 +1,10 @@
-// app/profile/page.tsx
-
 "use client";
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { firebasedb } from "../utils/firebaseConfig";
 import { supabase } from "../utils/supabaseClient";
 
 interface UserProfile {
@@ -26,92 +26,78 @@ interface DbUser {
   user_image_url?: string | null;
 }
 
+interface User {
+  id: string;
+  fullname: string;
+  email: string;
+  gender: string;
+  user_image_url: string | null;
+  password?: string;
+}
+
 export default function ProfilePage() {
   const [formData, setFormData] = useState<UserProfile | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const fetchUserProfile = async () => {
+    const currentUser = localStorage.getItem("currentUser");
+    if (currentUser) {
+      const userData = JSON.parse(currentUser);
+      setUser(userData);
+
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        console.log("Session:", session);
-        if (!session?.user) {
-          alert("Please login first");
-          window.location.href = "/auth/login";
-          return;
-        }
-        console.log("User ID:", session.user.id);
+        console.log("User ID:", userData.id);
+        console.log("Fetching user data for ID:", userData.id);
 
-        console.log("Fetching user data for ID:", session.user.id);
-        const selectResp = await supabase
-          .from("user_tb")
-          .select("*")
-          .eq("id", session.user.id)
-          .single<DbUser>();
+        const userDocRef = doc(firebasedb, "user", userData.id);
+        getDoc(userDocRef)
+          .then((userDoc) => {
+            console.log("Select response:", userDoc);
+            let userRow: DbUser | null = userDoc.exists()
+              ? ({ id: userData.id, ...userDoc.data() } as DbUser)
+              : null;
 
-        console.log("Select response:", selectResp);
-        let userRow: DbUser | null = selectResp.data ?? null;
-        const selectError = selectResp.error;
+            if (!userRow) {
+              console.log("No user record found, using localStorage data");
+              userRow = userData as DbUser;
+            }
 
-        if (selectError && !userRow) {
-          console.log("No user record found, creating default profile");
-          const fullNameMeta =
-            (session.user as { user_metadata?: { full_name?: string } })
-              .user_metadata?.full_name ?? "";
+            const userProfile: UserProfile = {
+              id: userRow.id,
+              fullName: userRow.fullname ?? "",
+              email: userRow.email ?? "",
+              gender: userRow.gender ?? "Male",
+              profilePicture: userRow.user_image_url ?? null,
+            };
 
-          userRow = {
-            id: session.user.id,
-            email: session.user.email ?? "",
-            fullname: fullNameMeta,
-            gender: "Male",
-            user_image_url: null,
-          } as DbUser;
-        }
-
-        if (!userRow) {
-          throw new Error("Profile not found after insert");
-        }
-
-        const userProfile: UserProfile = {
-          id: userRow.id,
-          fullName: userRow.fullname ?? "",
-          email: userRow.email ?? session.user.email ?? "",
-          gender: userRow.gender ?? "Male",
-          profilePicture: userRow.user_image_url ?? null,
-        };
-
-        setFormData(userProfile);
-        setImagePreview(userProfile.profilePicture);
+            setFormData(userProfile);
+            setImagePreview(userProfile.profilePicture);
+          })
+          .catch((err) => {
+            console.error("Error fetching user profile:", err);
+            const userProfile: UserProfile = {
+              id: userData.id,
+              fullName: userData.fullname ?? "",
+              email: userData.email ?? "",
+              gender: userData.gender ?? "Male",
+              profilePicture: userData.user_image_url ?? null,
+            };
+            setFormData(userProfile);
+            setImagePreview(userProfile.profilePicture);
+          });
       } catch (err) {
-        console.error("Error fetching user profile:", err);
-        console.error("Error details:", {
-          message: err instanceof Error ? err.message : "Unknown error",
-          stack: err instanceof Error ? err.stack : undefined,
-          error: err,
-        });
-
-        let errorMessage = "Unknown error";
-        if (err instanceof Error) {
-          errorMessage = err.message;
-        } else if (typeof err === "string") {
-          errorMessage = err;
-        } else if (err && typeof err === "object") {
-          errorMessage = JSON.stringify(err);
-        }
-
-        console.error("Final error message:", errorMessage);
-        alert(`Failed to load profile data: ${errorMessage}`);
-      } finally {
-        setIsLoading(false);
+        console.error("Error:", err);
+        alert("Failed to load profile data");
       }
-    };
-
-    fetchUserProfile();
+    } else {
+      alert("Please login first");
+      window.location.href = "/auth/login";
+    }
+    setIsLoading(false);
   }, []);
 
   const handleInputChange = (
@@ -137,7 +123,7 @@ export default function ProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!formData) return;
+    if (!formData || !user) return;
 
     setIsUpdating(true);
     try {
@@ -148,7 +134,6 @@ export default function ProfilePage() {
           throw new Error("File size must be less than 5MB");
         }
 
-        // ตรวจสอบประเภทไฟล์
         const allowedTypes = [
           "image/jpeg",
           "image/jpg",
@@ -167,14 +152,14 @@ export default function ProfilePage() {
             let pathInBucket: string | null = null;
             try {
               const url = new URL(formData.profilePicture);
-              const idx = url.pathname.indexOf("/Foodtb_bk/");
+              const idx = url.pathname.indexOf("/usertb_bk/");
               if (idx >= 0) {
                 pathInBucket = decodeURIComponent(
-                  url.pathname.substring(idx + "/Foodtb_bk/".length)
+                  url.pathname.substring(idx + "/usertb_bk/".length)
                 );
               }
             } catch {
-              const marker = "/Foodtb_bk/";
+              const marker = "/usertb_bk/";
               const idx2 = formData.profilePicture.indexOf(marker);
               if (idx2 >= 0) {
                 pathInBucket = decodeURIComponent(
@@ -184,7 +169,7 @@ export default function ProfilePage() {
             }
 
             if (pathInBucket) {
-              await supabase.storage.from("Foodtb_bk").remove([pathInBucket]);
+              await supabase.storage.from("usertb_bk").remove([pathInBucket]);
             }
           } catch (imgErr) {
             console.warn("Old image removal failed:", imgErr);
@@ -196,7 +181,7 @@ export default function ProfilePage() {
         const filePath = `profile-images/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
-          .from("Foodtb_bk")
+          .from("usertb_bk")
           .upload(filePath, selectedFile);
 
         if (uploadError) {
@@ -205,20 +190,32 @@ export default function ProfilePage() {
 
         const {
           data: { publicUrl },
-        } = supabase.storage.from("Foodtb_bk").getPublicUrl(filePath);
+        } = supabase.storage.from("usertb_bk").getPublicUrl(filePath);
 
         newImageUrl = publicUrl;
       }
 
-      const { error } = await supabase.from("user_tb").upsert({
-        id: formData.id,
+      const userDocRef = doc(firebasedb, "user", user.id);
+      await setDoc(
+        userDocRef,
+        {
+          fullname: formData.fullName,
+          email: formData.email,
+          gender: formData.gender,
+          user_image_url: newImageUrl,
+          update_at: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+
+      const updatedUser = {
+        ...user,
         fullname: formData.fullName,
         email: formData.email,
         gender: formData.gender,
         user_image_url: newImageUrl,
-      });
-
-      if (error) throw error;
+      };
+      localStorage.setItem("currentUser", JSON.stringify(updatedUser));
 
       alert("Profile updated successfully!");
 
@@ -275,6 +272,7 @@ export default function ProfilePage() {
                   fill
                   className="object-cover"
                   sizes="128px"
+                  unoptimized
                 />
               ) : (
                 <span className="text-gray-500 text-sm">No Image</span>

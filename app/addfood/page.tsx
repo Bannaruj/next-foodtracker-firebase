@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { collection, addDoc } from "firebase/firestore";
+import { firebasedb } from "../utils/firebaseConfig";
 import { supabase } from "../utils/supabaseClient";
 import Image from "next/image";
 
@@ -35,7 +37,7 @@ export default function AddFoodPage() {
 
     try {
       const formEl = e.currentTarget;
-      console.log("Supabase client:", supabase);
+      console.log("Firebase client:", firebasedb);
       if (!selectedFile) {
         console.log("No file selected, proceeding without image");
       }
@@ -99,28 +101,19 @@ export default function AddFoodPage() {
         fooddate_at: data.date,
         food_image_url: imageUrl,
         created_at: new Date().toISOString(),
+        update_at: new Date().toISOString(),
       });
 
-      const { data: foodData, error: foodError } = await supabase
-        .from("food_tb")
-        .insert([
-          {
-            foodname: data.foodName,
-            meal: data.mealType,
-            fooddate_at: data.date,
-            food_image_url: imageUrl,
-            created_at: new Date().toISOString(),
-          },
-        ])
-        .select()
-        .single();
+      const docRef = await addDoc(collection(firebasedb, "food"), {
+        foodname: data.foodName,
+        meal: data.mealType,
+        fooddate_at: data.date,
+        food_image_url: imageUrl,
+        created_at: new Date().toISOString(),
+        update_at: new Date().toISOString(),
+      });
 
-      if (foodError) {
-        console.error("Food insert error:", foodError);
-        throw new Error(`Failed to save food data: ${foodError.message}`);
-      }
-
-      console.log("Food data saved successfully:", foodData);
+      console.log("Food data saved successfully with ID:", docRef.id);
 
       alert("Food saved successfully!");
 
@@ -209,7 +202,10 @@ export default function AddFoodPage() {
                 <Image
                   src={imagePreview}
                   alt="Food Preview"
+                  width={400}
+                  height={192}
                   className="w-full h-full object-cover rounded-lg"
+                  unoptimized
                 />
               ) : (
                 <span className="text-gray-500">Image Preview</span>

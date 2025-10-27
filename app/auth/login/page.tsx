@@ -3,13 +3,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/app/utils/supabaseClient";
-
-interface SupabaseError {
-  message: string;
-  details?: string;
-  hint?: string;
-}
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { firebasedb } from "@/app/utils/firebaseConfig";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -29,42 +24,39 @@ export default function LoginPage() {
     setError(null);
 
     try {
-      const { data: authData, error: authError } =
-        await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+      const q = query(
+        collection(firebasedb, "user"),
+        where("email", "==", email),
+        where("password", "==", password)
+      );
+      const querySnapshot = await getDocs(q);
 
-      if (authError) throw authError;
-
-      const userId = authData.user?.id;
-
-      if (userId) {
-        const { data: profileData, error: profileError } = await supabase
-          .from("user_tb")
-          .select("*")
-          .eq("id", userId)
-          .limit(1)
-          .single();
-
-        if (profileError) {
-          console.warn("Failed to fetch profile after login:", profileError);
-        } else {
-          console.log("Logged in user profile:", profileData);
-        }
+      if (querySnapshot.empty) {
+        setError("Invalid email or password.");
+        setLoading(false);
+        return;
       }
 
+      const userDoc = querySnapshot.docs[0];
+      const userData = userDoc.data();
+
+      localStorage.setItem(
+        "currentUser",
+        JSON.stringify({
+          id: userDoc.id,
+          ...userData,
+        })
+      );
+
+      console.log("Logged in user:", userData);
       router.push("/dashboard");
     } catch (err: unknown) {
       console.error("Login Error:", err);
-
-      if (err instanceof Error) {
-        setError(err.message);
-      } else if (typeof err === "object" && err !== null && "message" in err) {
-        setError((err as SupabaseError).message);
-      } else {
-        setError("An unexpected error occurred during login.");
-      }
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : "An unexpected error occurred during login.";
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

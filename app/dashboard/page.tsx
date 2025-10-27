@@ -1,6 +1,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  doc,
+  deleteDoc,
+} from "firebase/firestore";
+import { firebasedb } from "@/app/utils/firebaseConfig";
 import { supabase } from "@/app/utils/supabaseClient";
 import Link from "next/link";
 import Image from "next/image";
@@ -13,6 +22,29 @@ interface FoodRow {
   food_image_url: string | null;
 }
 
+const formatDate = (date: string | unknown): string => {
+  if (!date) return "-";
+  if (typeof date === "string") return date;
+  if (date && typeof date === "object") {
+    const dateObj = date as Record<string, unknown>;
+    if ("toDate" in dateObj && typeof dateObj.toDate === "function") {
+      return dateObj.toDate().toLocaleDateString();
+    }
+    if ("seconds" in dateObj && typeof dateObj.seconds === "number") {
+      return new Date(dateObj.seconds * 1000).toLocaleDateString();
+    }
+  }
+  return "-";
+};
+
+interface User {
+  id: string;
+  fullname: string;
+  email: string;
+  gender: string;
+  user_image_url: string | null;
+}
+
 export default function DashBoardPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -21,51 +53,51 @@ export default function DashBoardPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+  const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (user && user.id) {
-        const { data, error } = await supabase
-          .from("user_tb")
-          .select("user_image_url")
-          .eq("id", user.id)
-          .single();
-        if (!error && data?.user_image_url) {
-          setUserImage(data.user_image_url);
-        } else {
-          setUserImage(null);
-        }
-      } else {
-        setUserImage(null);
-      }
-    };
-    fetchProfile();
+    const currentUser = localStorage.getItem("currentUser");
+    if (currentUser) {
+      const userData = JSON.parse(currentUser);
+      setUser(userData);
+      setUserImage(userData.user_image_url || null);
+    } else {
+      window.location.href = "/auth/login";
+    }
   }, []);
 
   useEffect(() => {
-    const fetchFoods = async () => {
-      setIsLoading(true);
-      setLoadError(null);
-      try {
-        const { data, error } = await supabase
-          .from("food_tb")
-          .select("id, foodname, meal, fooddate_at, food_image_url")
-          .order("fooddate_at", { ascending: false });
-        if (error) throw error;
-        setFoods((data as FoodRow[]) ?? []);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        setLoadError(msg);
-      } finally {
+    if (!user) return;
+
+    setIsLoading(true);
+    setLoadError(null);
+
+    const q = query(
+      collection(firebasedb, "food"),
+      orderBy("fooddate_at", "desc")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const foodData: FoodRow[] = [];
+        snapshot.forEach((doc) => {
+          foodData.push({
+            id: doc.id,
+            ...doc.data(),
+          } as FoodRow);
+        });
+        setFoods(foodData);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching foods:", error);
+        setLoadError(error.message);
         setIsLoading(false);
       }
-    };
-    fetchFoods();
-  }, []);
+    );
+
+    return () => unsubscribe();
+  }, [user]);
 
   const handleDelete = async (food: FoodRow) => {
     if (!food?.id) return;
@@ -103,12 +135,7 @@ export default function DashBoardPage() {
         }
       }
 
-      const { error } = await supabase
-        .from("food_tb")
-        .delete()
-        .eq("id", food.id);
-      if (error) throw error;
-      setFoods((prev) => prev.filter((f) => f.id !== food.id));
+      await deleteDoc(doc(firebasedb, "food", food.id));
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       alert(`Failed to delete: ${msg}`);
@@ -120,14 +147,14 @@ export default function DashBoardPage() {
   const filteredFoods = foods.filter((f) => {
     const term = searchTerm.trim().toLowerCase();
     if (!term) return true;
+    const formattedDate = formatDate(f.fooddate_at);
     return (
       (f.foodname ?? "").toLowerCase().includes(term) ||
       (f.meal ?? "").toLowerCase().includes(term) ||
-      (f.fooddate_at ?? "").toLowerCase().includes(term)
+      formattedDate.toLowerCase().includes(term)
     );
   });
 
-  // TODO: Replace with real data fetching and pagination logic
   const totalPages = 1;
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -247,7 +274,7 @@ export default function DashBoardPage() {
                 filteredFoods.map((f) => (
                   <tr key={f.id} className="hover:bg-gray-50">
                     <td className="p-4 text-gray-600 align-middle">
-                      {f.fooddate_at ?? "-"}
+                      {formatDate(f.fooddate_at)}
                     </td>
                     <td className="p-4 align-middle">
                       {f.food_image_url ? (
@@ -257,6 +284,7 @@ export default function DashBoardPage() {
                           width={64}
                           height={64}
                           className="w-16 h-16 object-cover rounded-md border"
+                          unoptimized
                         />
                       ) : (
                         <div className="w-16 h-16 bg-gray-200 rounded-md border flex items-center justify-center text-gray-500 text-xs">

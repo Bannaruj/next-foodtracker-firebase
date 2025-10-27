@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { collection, addDoc, query, where, getDocs } from "firebase/firestore";
+import { firebasedb } from "@/app/utils/firebaseConfig";
 import { supabase } from "@/app/utils/supabaseClient";
 
 interface FormData {
@@ -10,12 +12,6 @@ interface FormData {
   email: string;
   password: string;
   gender: string;
-}
-
-interface SupabaseError {
-  message: string;
-  details?: string;
-  hint?: string;
 }
 
 export default function RegisterPage() {
@@ -65,113 +61,68 @@ export default function RegisterPage() {
     let user_image_url: string | null = null;
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-      });
+      const q = query(
+        collection(firebasedb, "user"),
+        where("email", "==", email)
+      );
+      const querySnapshot = await getDocs(q);
 
-      if (authError) {
-        const errObj = authError as unknown;
-        const code = (errObj as { code?: string | number })?.code;
-        const msg = (errObj as { message?: string })?.message ?? "";
-        if (
-          code === "email_provider_disabled" ||
-          msg.includes("email provider disabled")
-        ) {
-          setError(
-            "Registration is disabled: email signups are not enabled in your Supabase project. Enable the Email provider in Supabase Auth settings or use a different auth method."
-          );
+      if (!querySnapshot.empty) {
+        setError("Email already exists. Please use a different email.");
+        setLoading(false);
+        return;
+      }
+
+      if (imageFile) {
+        const fileExtension = imageFile.name.split(".").pop();
+        const filePath = `users/${Date.now()}.${fileExtension}`;
+
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from("usertb_bk")
+          .upload(filePath, imageFile, {
+            cacheControl: "3600",
+            upsert: true,
+          });
+
+        if (uploadError) {
+          console.error("Upload error:", uploadError);
+          setError(`Image upload error: ${uploadError.message || uploadError}`);
+          setLoading(false);
           return;
         }
-        throw authError;
-      }
-
-      const userId = authData.user?.id;
-
-      let session = null;
-      try {
-        const { data: signInData, error: signInError } =
-          await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
-        if (signInError) throw signInError;
-        session =
-          (signInData as unknown as { session?: unknown })?.session ?? null;
-      } catch (e) {
-        // If sign in fails, skip image upload
-        console.warn("Sign in after register failed:", e);
-      }
-
-      if (userId) {
-        if (imageFile && session) {
-          console.log("Session for upload:", session);
-          const fileExtension = imageFile.name.split(".").pop();
-          const filePath = `${userId}/${Date.now()}.${fileExtension}`;
-
-          const { data: uploadData, error: uploadError } =
-            await supabase.storage
-              .from("usertb_bk")
-              .upload(filePath, imageFile, {
-                cacheControl: "3600",
-                upsert: true,
-              });
-
-          if (uploadError) {
-            console.error("Upload error:", uploadError);
-            setError(
-              `Image upload error: ${uploadError.message || uploadError}`
-            );
-            setLoading(false);
-            return;
-          }
-          if (!uploadData) {
-            setError("Failed to upload image to storage.");
-            setLoading(false);
-            return;
-          }
-
-          const { data: publicUrlData } = supabase.storage
-            .from("usertb_bk")
-            .getPublicUrl(filePath);
-          user_image_url =
-            (publicUrlData as { publicUrl?: string })?.publicUrl ?? null;
-        } else if (imageFile && !session) {
-          setMessage(
-            "Registration successful! Please check your email to confirm your account. You can upload a profile picture after you sign in."
-          );
+        if (!uploadData) {
+          setError("Failed to upload image to storage.");
+          setLoading(false);
+          return;
         }
 
-        const { error: dbError } = await supabase.from("user_tb").insert({
-          id: userId,
-          fullname: fullName,
-          password: password,
-          email: email,
-          gender: gender,
-          user_image_url: user_image_url,
-        });
-
-        if (dbError) throw dbError;
-
-        setMessage(
-          "Registration successful! Please check your email for confirmation. (Note: your password is stored securely by Supabase Auth and not saved as plaintext in the user_tb table.)"
-        );
-
-        setFormData({ fullName: "", email: "", password: "", gender: "Male" });
-        setImagePreview(null);
-        setImageFile(null);
-      } else {
-        setMessage("การลงทะเบียนเสร็จสมบูรณ์");
+        const { data: publicUrlData } = supabase.storage
+          .from("usertb_bk")
+          .getPublicUrl(filePath);
+        user_image_url =
+          (publicUrlData as { publicUrl?: string })?.publicUrl ?? null;
       }
+
+      await addDoc(collection(firebasedb, "user"), {
+        fullname: fullName,
+        password: password,
+        email: email,
+        gender: gender,
+        user_image_url: user_image_url,
+        created_at: new Date().toISOString(),
+        update_at: new Date().toISOString(),
+      });
+
+      setMessage("Registration successful! You can now login.");
+
+      setFormData({ fullName: "", email: "", password: "", gender: "Male" });
+      setImagePreview(null);
+      setImageFile(null);
     } catch (err: unknown) {
       console.warn("Registration Error:", err);
-      if (err instanceof Error) {
-        setError(err.message);
-      } else if (typeof err === "object" && err !== null && "message" in err) {
-        setError((err as SupabaseError).message);
-      } else {
-        setError("เกิดข้อผิดพลาด");
-      }
+      const errorMessage =
+        err instanceof Error ? err.message : "เกิดข้อผิดพลาด";
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
